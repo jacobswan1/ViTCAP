@@ -100,8 +100,11 @@ def synchronize():
     else:
         from src.tools.common import get_mpi_size
         if get_mpi_size() > 1:
-            import horovod.torch as hvd
-            hvd.allreduce(torch.tensor(0), name='barrier')
+            try:
+                import horovod.torch as hvd
+                hvd.allreduce(torch.tensor(0), name='barrier')
+            except ImportError:
+                return False
 
 
 def dict_has_path(d, p, with_type=False):

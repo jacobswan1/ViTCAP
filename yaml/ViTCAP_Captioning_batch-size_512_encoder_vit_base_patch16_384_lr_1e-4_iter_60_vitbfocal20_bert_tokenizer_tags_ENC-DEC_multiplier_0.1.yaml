@@ -2,7 +2,7 @@ all_test_data:
 - test_data: ViTCAPCOCO
   test_split: test
 param:
-    data: ViTCAPCOCO
+    data: TaxCocoCaptionSmall
     drop_out: 0
     net: B
     mask_type: seq2seq

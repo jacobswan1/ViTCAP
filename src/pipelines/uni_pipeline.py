@@ -447,9 +447,9 @@ class UniPipeline(object):
                               eps=1e-8)
         else:
             raise NotImplementedError(self.cfg.optimizer_type)
-        if self.cfg.optimizer_type in ['LARS']:
-            from torchlars import LARS
-            optimizer = LARS(optimizer=optimizer)
+        # if self.cfg.optimizer_type in ['LARS']:
+        #     from torchlars import LARS
+        #     optimizer = LARS(optimizer=optimizer)
         if self.cfg.ema_optimizer:
             from src.tools.opt.ema_optimizer import EMAOptimizer
             optimizer = EMAOptimizer(optimizer=optimizer)

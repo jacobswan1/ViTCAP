@@ -1,7 +1,7 @@
 # Copyright (c) Facebook, Inc. and its affiliates. All Rights Reserved.
 import re
 import torch
-from .LARC import LARC
+# from .LARC import LARC
 
 from .lr_scheduler import WarmupMultiStepLR
 from .lr_scheduler import WarmupCosineAnnealingLR
@@ -55,8 +55,8 @@ def make_optimizer(cfg, model, resume=False):
         raise ValueError(
             'Optimizer "{}" is not supported'.format(cfg.SOLVER.OPTIMIZER)
         )
-    if cfg.SOLVER.USE_LARC:
-        optimizer = LARC(optimizer, clip=True, trust_coefficient=0.002)
+    # if cfg.SOLVER.USE_LARC:
+    #     optimizer = LARC(optimizer, clip=True, trust_coefficient=0.002)
     return optimizer
 
 

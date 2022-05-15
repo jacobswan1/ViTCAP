@@ -3,7 +3,7 @@ from bisect import bisect_right
 
 import torch
 import math
-from .LARC import LARC
+# from .LARC import LARC
 
 
 # FIXME ideally this would be achieved with a CombinedLRScheduler,
@@ -36,8 +36,8 @@ class WarmupMultiStepLR(torch.optim.lr_scheduler._LRScheduler):
         self.warmup_factor = warmup_factor
         self.warmup_iters = warmup_iters
         self.warmup_method = warmup_method
-        if isinstance(optimizer, LARC):
-            optimizer = optimizer.optim
+        # if isinstance(optimizer, LARC):
+        #     optimizer = optimizer.optim
         super(WarmupMultiStepLR, self).__init__(optimizer, last_epoch)
 
     def get_lr(self):

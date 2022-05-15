@@ -235,24 +235,6 @@ def max_reduce_(x):
         torch.distributed.all_reduce(x, torch.distributed.ReduceOp.MAX)
 
 
-class FlopCountModel(torch.nn.Module):
-    def __init__(self, model):
-        super().__init__()
-        self.model = model
-    def forward(self, args, kwargs):
-        y = self.model(*args, **kwargs)
-        return y
-
-
-def count_flops(model, *args, **kwargs):
-    if isinstance(model, torch.nn.parallel.DistributedDataParallel):
-        model = model.module
-    model.eval()
-    model = FlopCountModel(model)
-    from fvcore.nn import flop_count
-    y = flop_count(model, (args, kwargs,))
-    return y
-
 
 def set_seed(seed, n_gpu):
     import random
