@@ -24,7 +24,7 @@
  ## Dataset
   
  Download the [COCO-captioning TSV files]() and place it in `./data/coco_caption`. 
- (Please do not distribute it for commercial use due to possible copyright concern!! Otherwise I might have to retract it soon which causes great inconvenience for future researchers.)
+ (**Please do not distribute it for commercial use due to possible copyright concern.** Otherwise I might have to retract it soon which causes great inconvenience for future researchers.)
    
  For the large scale pre-training corpus of ViTCAP, refer to [VinVL Repo](https://github.com/microsoft/Oscar/blob/master/VinVL_DOWNLOAD.md) for downloading large scale VL corpus.
  
@@ -33,7 +33,7 @@
  ## Training & Evaluation
  The bellowing commands will do the training & evaluation.
  
- To conduct the CIDEr optimization, run the following command. Note that CIDEr optimization consumes large memories (on V100 with 32GB memories) and I just randomly sample just 200 tokens for training. This probably indicates that using a larger memory device or better sampling method, better CIDEr scores might be reached.
+ To conduct the CIDEr optimization, run the following command. Note that CIDEr optimization consumes large memories and I just randomly sample just 200 tokens for training on my V100 with 32GB memories. This probably indicates that better CIDEr scores might be reached using a larger memory device or better sampling method.
  
  
  ## Checkpoint
@@ -42,9 +42,13 @@
  
  Download the concept classification trained ViT checkpoint. We find that it is essential to use the semantic classification optmized ViT to initialize ViTCAP, which is trained to predict the image-level concepts with 4 million images.
  
- The training log of can be found in [here](). The results across difference epochs are shown as:
- <img src="images/map_TaxCocoCaption_test_Bleu_4.png" width="250"> 
+ The training log of can be found in [here](./checkpoint/Logit_Vilt_captioning_testing_batch-size_512_encoder_vit_base_patch16_384_lr_1e-4_iter_60_vitbfocal20_bert_tokenizer_tags_ENC-DEC_multiplier_0.1_expand_tag-classifier_emb.txt). The results across difference epochs are shown as below:
  
+ <img src="images/map_TaxCocoCaption_test_Bleu_4.png" width="180">   <img src="images/map_TaxCocoCaption_test_CIDEr.png" width="180"> 
+ <img src="images/map_TaxCocoCaption_test_METEOR.png" width="180">   <img src="images/map_TaxCocoCaption_test_ROUGE_L.png" width="180"> 
+ <img src="images/map_TaxCocoCaption_test_SPICE.png" width="180"> 
+ 
+ From left to right: <em> BLEU-4, CIDEr, METEOR, ROUGE, SPICE </em>.
     
  ## ToDo
 - [x] Training and evaluation code
@@ -53,9 +57,7 @@
 - [x] COCO pre-trained checkpoint.
 - [ ] Visualization codes for predicted semantic concepts and grounded visual concepts.
 - [ ] Implementation on no-caps and Google-CC and pre-training. No plan at this time. 
-
-   
-            
+ 
  
  ## Citation
   
