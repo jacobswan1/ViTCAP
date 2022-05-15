@@ -432,6 +432,7 @@ class CaptionUniPipeline(UniPipeline):
         label_loader = LoadLabel(
             data=data, split=split,
             version=self.cfg.train_label_version)
+
         all_trans.append(label_loader)
 
         text_ab = IdentifyTextAB(

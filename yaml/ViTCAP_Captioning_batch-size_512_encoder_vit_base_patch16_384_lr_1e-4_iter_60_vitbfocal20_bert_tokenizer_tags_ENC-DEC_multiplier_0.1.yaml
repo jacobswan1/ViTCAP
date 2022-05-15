@@ -1,0 +1,53 @@
+all_test_data:
+- test_data: ViTCAPCOCO
+  test_split: test
+param:
+    data: ViTCAPCOCO
+    drop_out: 0
+    net: B
+    mask_type: seq2seq
+    tokenizer_file: ./yaml/vinvl_label.json
+    basemodel: ./checkpoint/Jacob_Tagger_TaxCCSBUCocoVGCap_B_Vilt_ViT_16_384_20_epoch_lr_5e-5_BS_1024_loss_focal_crop_0.08_bert_category.pt
+    text_encoder_type: ./yaml/VILT-L12-H784-uncased_16_384
+    image_encoder_type: VitEmb_vit_base_patch16_384
+    crop_pct: 1.0
+    base_lr: 1.0e-04
+    split_blocks: 4
+    topk: 50                        # retain top-K concepts for captioning
+    lr_multiplier: 0.1
+    monitor_after: True
+    test_crop_size: 384
+    train_crop_size: 384
+    train_transform: vit
+    use_img_layernorm: False
+    expid: ViTCAP_batch-size_512_encoder_vit_base_patch16_384_lr_1e-4_iter_60_vitbfocal20_bert_tokenizer_tags_ENC-DEC_multiplier_0.1_expand_tag-classifier_emb
+    full_expid: ViTCAP_batch-size_512_encoder_vit_base_patch16_384_lr_1e-4_iter_60_vitbfocal20_bert_tokenizer_tags_ENC-DEC_multiplier_0.1_expand_tag-classifier_emb
+    image_encoder_pretrained: True
+    expid_prefix: Jacob
+    pad_to_max: True
+    add_od_labels: True
+    effective_batch_size: 2
+    test_batch_size: 16
+    max_iter: 30e
+    ignore_project_image: True
+    input_small_scale: 0.08
+    log_step: 100
+    weight_decay: 0.05
+    expid_prefix: CAPU
+    use_amp: False
+    tagemb: cls
+    max_img_seq_length: 0
+    od_label_conf: 0.2
+    max_seq_length: 70
+    max_seq_a_length: 20
+    img_feature_dim: 2054
+    train_label_version: vinvl
+    loss: focal
+    category: bert
+    encode: bert              # nltk: use only JJ and NN as expanding tags; bert: using all words as tags
+    force_train: True
+    force_predict: True
+    pipeline_type:
+        from: src.pipelines.tagger_caption_uni_pipeline_expanding_bertemb
+        import: CaptionUniPipeline
+type: pipeline_train_eval_multi
