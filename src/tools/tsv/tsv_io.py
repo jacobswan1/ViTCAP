@@ -5,8 +5,6 @@ import glob
 import json
 import random
 from src.tools.common import ensure_directory
-from src.tools.common import hash_sha1
-from src.tools.common import get_user_name
 import six
 import os
 import os.path as op
@@ -933,6 +931,31 @@ def tsv_writers(all_values, tsv_file_names, sep='\t'):
         os.rename(tsv_lineidx_file_tmp, tsv_lineidx_file)
 
 
+def iter_caption_to_json(iter_caption, json_file):
+    # save gt caption to json format so thet we can call the api
+    key_captions = [(key, json.loads(p)) for key, p in iter_caption]
+
+    info = {
+        'info': 'dummy',
+        'licenses': 'dummy',
+        'type': 'captions',
+    }
+    info['images'] = [{'file_name': k, 'id': k} for k, _ in key_captions]
+    n = 0
+    annotations = []
+    for k, cs in key_captions:
+        for c in cs:
+            annotations.append({
+                'image_id': k,
+                'caption': c['caption'],
+                'id': n
+            })
+            n += 1
+    info['annotations'] = annotations
+    from src.tools.common import write_to_file
+    write_to_file(json.dumps(info), json_file)
+
+
 def tsv_writer(values, tsv_file_name, sep='\t'):
     ensure_directory(os.path.dirname(tsv_file_name))
     tsv_lineidx_file = os.path.splitext(tsv_file_name)[0] + '.lineidx'
@@ -978,6 +1001,53 @@ def tsv_reader(tsv_file_name, sep='\t'):
     with open(tsv_file_name, 'r') as fp:
         for i, line in enumerate(fp):
             yield [x.strip() for x in line.split(sep)]
+
+
+def delete_tsv_files(tsvs):
+    for t in tsvs:
+        if op.isfile(t):
+            os.remove(t)
+        line = op.splitext(t)[0] + '.lineidx'
+        if op.isfile(line):
+            os.remove(line)
+
+def concat_files(ins, out):
+    ensure_directory(op.dirname(out))
+    out_tmp = out + '.tmp'
+    with open(out_tmp, 'wb') as fp_out:
+        for i, f in enumerate(ins):
+            logging.info('concating {}/{} - {}'.format(i, len(ins), f))
+            with open(f, 'rb') as fp_in:
+                shutil.copyfileobj(fp_in, fp_out, 1024*1024*10)
+    os.rename(out_tmp, out)
+
+def write_to_file(contxt, file_name, append=False):
+    p = os.path.dirname(file_name)
+    ensure_directory(p)
+    if type(contxt) is str:
+        contxt = contxt.encode()
+    flag = 'wb'
+    if append:
+        flag = 'ab'
+    with open(file_name, flag) as fp:
+        fp.write(contxt)
+
+
+def concat_tsv_files(tsvs, out_tsv):
+    if len(tsvs) == 1 and tsvs[0] == out_tsv:
+        return
+    concat_files(tsvs, out_tsv)
+    sizes = [os.stat(t).st_size for t in tsvs]
+    import numpy as np
+    sizes = np.cumsum(sizes)
+    all_idx = []
+    for i, t in enumerate(tsvs):
+        for idx in load_list_file(op.splitext(t)[0] + '.lineidx'):
+            if i == 0:
+                all_idx.append(idx)
+            else:
+                all_idx.append(str(int(idx) + sizes[i - 1]))
+    write_to_file('\n'.join(all_idx), op.splitext(out_tsv)[0] + '.lineidx')
 
 
 def csv_reader(tsv_file_name):
@@ -1171,24 +1241,6 @@ def load_labels(file_name):
         key_to_rects[key] = rects
         key_to_idx[key] = i
     return key_to_rects, key_to_idx
-
-
-def azcopy_read(fname):
-    # we ignore fname since it could be a mounted blobfuse folder in AML
-    local_file_name = op.join('/tmp', '{}_{}'.format(get_user_name(),
-        hash_sha1(op.realpath(op.abspath(fname))) +
-        op.splitext(fname)[1]))
-    if op.isfile(local_file_name):
-        return open(local_file_name, 'r')
-    config_file = os.environ['FILE_OPEN_AZCOPY_BLOB_ACCOUNT_PATH']
-    from src.qd.cloud_storage import create_cloud_storage
-    remote_path = op.join(os.environ['FILE_OPEN_AZCOPY_REMOTE_PATH'],
-            op.relpath(fname, os.environ['FILE_OPEN_AZCOPY_LOCAL_PATH']))
-    c = create_cloud_storage(config_file=config_file)
-    logging.info('downloading from {} to {} for {}'.format(remote_path,
-        local_file_name, fname))
-    c.az_download(remote_path, local_file_name)
-    return open(local_file_name, 'r')
 
 
 def load_list_file(fname):

@@ -57,6 +57,7 @@ def load_latest_parameters(folder):
 
 
 def get_latest_parameter_file(folder):
+    import os.path as op
     yaml_pattern = op.join(folder,
             'parameters_*.yaml')
     yaml_files = glob.glob(yaml_pattern)

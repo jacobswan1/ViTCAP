@@ -132,6 +132,7 @@ def ensure_init_process_group(device_id=None, port=12345):
             'init_method': dist_url,
             'rank': get_mpi_rank(),
             'world_size': get_mpi_size(),
+            # 'world_size': torch.distributed.get_world_size(),
             'timeout': timedelta(days=10),
         }
         if device_id is None:
@@ -149,6 +150,26 @@ def calc_num_node_in_grad_fn(grad_fn):
             for f in grad_fn.next_functions:
                 result += calc_num_node_in_grad_fn(f)
     return result
+
+
+def evaluate_topk(iter_pred_tsv, iter_label_tsv):
+    import json
+    correct = 0
+    total = 0
+    for (key, str_rects), (key_pred, str_pred) in zip(iter_label_tsv, iter_pred_tsv):
+        total = total + 1
+        assert key == key_pred
+        curr_predict = json.loads(str_pred)
+        if len(curr_predict) == 0:
+            continue
+        curr_gt_rects = json.loads(str_rects)
+        if type(curr_gt_rects) is int:
+            # imagenet data
+            curr_gt_rects = [{'class': str(curr_gt_rects)}]
+        curr_pred_best = curr_predict[max(range(len(curr_predict)), key=lambda i: curr_predict[i]['conf'])]['class']
+        if any(g['class'] == str(curr_pred_best) for g in curr_gt_rects):
+            correct = correct + 1
+    return 1. * correct / total
 
 
 def accuracy(output, target, topk=(1,)):

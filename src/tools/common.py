@@ -1,6 +1,7 @@
 import os
 import base64
 import cv2
+from tqdm import tqdm
 import sys
 import torch
 import yaml

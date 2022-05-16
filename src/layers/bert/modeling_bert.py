@@ -21,10 +21,8 @@ import os
 import sys
 import math
 import json
-import copy
 import torch
 import logging
-import numpy as np
 from io import open
 from torch import nn
 from .activations import ACT2FN
@@ -590,6 +588,7 @@ class BertPreTrainedModel(PreTrainedModel):
         if isinstance(module, nn.Linear) and module.bias is not None:
             module.bias.data.zero_()
 
+
 BERT_START_DOCSTRING = r"""    The BERT model was proposed in
     `BERT: Pre-training of Deep Bidirectional Transformers for Language Understanding`_
     by Jacob Devlin, Ming-Wei Chang, Kenton Lee and Kristina Toutanova. It's a bidirectional transformer
@@ -649,422 +648,6 @@ BERT_INPUTS_DOCSTRING = r"""
 """
 
 
-class TaggerEncDecSplitBertImgModel(BertPreTrainedModel):
-
-    def __init__(self, config):
-        super(TaggerEncDecSplitBertImgModel, self).__init__(config)
-
-        self.config = config
-        model_type = getattr(config, 'model_type', 'bert')
-
-        self.embeddings = BertEmbeddings(config)
-        self.encoder = TIMMVitSplitEncoder(config)
-
-        # let's simply re-use bert-pooler
-        self.caption_pooler = BertPooler(config)
-
-        # For Tag Prediction
-        self.pooler = BertPooler(config)
-        self.tag_vocab = config.vocab
-        self.tokenizer = config.tokenizer
-
-        if config.category == 'vinvl':
-            caption_vocab_size = config.vocab_size
-            config.vocab_size = len(self.tag_vocab['label_to_idx'])
-            self.tag_logit = BertCaptioningHeads(config)
-            config.vocab_size = caption_vocab_size
-        else:
-            self.tag_logit = BertCaptioningHeads(config)
-
-        self.category = config.category
-
-        self.img_dim = config.img_feature_dim  # 2054 #565
-        logger.info('BertImgModel Image Dimension: {}'.format(self.img_dim))
-
-        self.config = config
-
-        if getattr(config, 'decoder_layer', None):
-            config.num_hidden_layers = config.decoder_layer
-        else:
-            config.num_hidden_layers = 4
-        self.decoder = BertEncoder(config)
-
-        self.img_dim = config.img_feature_dim  # 2054 #565
-        logger.info('BertImgModel Image Dimension: {}'.format(self.img_dim))
-
-        self.img_feature_type = config.img_feature_type
-
-        try:
-            self.use_img_layernorm = config.use_img_layernorm
-        except:
-            self.use_img_layernorm = None
-
-        self.config = config
-        ignore_project_image = hasattr(config, 'ignore_project_image') and config.ignore_project_image
-        if not ignore_project_image:
-            if config.img_feature_type == 'dis_code':
-                self.code_embeddings = nn.Embedding(config.code_voc, config.code_dim, padding_idx=0)
-                self.img_embedding = nn.Linear(config.code_dim, self.config.hidden_size, bias=True)
-            elif config.img_feature_type == 'dis_code_t':  # transpose
-                self.code_embeddings = nn.Embedding(config.code_voc, config.code_dim, padding_idx=0)
-                self.img_embedding = nn.Linear(config.code_size, self.config.hidden_size, bias=True)
-            elif config.img_feature_type == 'dis_code_scale':  # scaled
-                self.input_embeddings = nn.Linear(config.code_dim, config.code_size, bias=True)
-                self.code_embeddings = nn.Embedding(config.code_voc, config.code_dim, padding_idx=0)
-                self.img_embedding = nn.Linear(config.code_dim, self.config.hidden_size, bias=True)
-            else:
-                self.img_embedding = nn.Linear(self.img_dim, self.config.hidden_size, bias=True)
-                self.dropout = nn.Dropout(config.hidden_dropout_prob)
-
-                if self.use_img_layernorm:
-                    if getattr(self.config, 'vinvl', None):
-                        self.img_layer_norm = LayerNormClass(config.hidden_size, eps=config.img_layer_norm_eps)
-                    else:
-                        self.LayerNorm = LayerNormClass(config.hidden_size, eps=config.img_layer_norm_eps)
-        else:
-            self.img_embedding = nn.Identity()
-            self.dropout = nn.Identity()
-
-        self.decoder.apply(self.init_weights)
-        self.embeddings.apply(self.init_weights)
-        self.caption_pooler.apply(self.init_weights)
-
-        # self.tag_logit.apply(self.init_weights)
-        # self.pooler.apply(self.init_weights)
-
-    def _resize_token_embeddings(self, new_num_tokens):
-        old_embeddings = self.embeddings.word_embeddings
-        new_embeddings = self._get_resized_embeddings(old_embeddings, new_num_tokens)
-        self.embeddings.word_embeddings = new_embeddings
-        return self.embeddings.word_embeddings
-
-    def _prune_heads(self, heads_to_prune):
-        """ Prunes heads of the model.
-            heads_to_prune: dict of {layer_num: list of heads to prune in this layer}
-            See base class PreTrainedModel
-        """
-        for layer, heads in heads_to_prune.items():
-            self.encoder.layer[layer].attention.prune_heads(heads)
-
-    def forward(self, input_ids, img_feats=None, token_type_ids=None, attention_mask=None,
-                position_ids=None, head_mask=None, encoder_history_states=None, cls_emb=None, label=None, gen_tag_ratio=None):
-
-        # =========================================== ViT Encoder ==================================================
-
-        head_mask = [None] * self.config.num_hidden_layers
-
-        # encoder visual attention
-        visual_attention = torch.zeros(img_feats.shape[0], 1, img_feats.shape[-2], img_feats.shape[-2]).cuda()
-
-        # feed the image encodings into the encoder
-        encoder_outputs, tag_encoder_outputs = self.encoder(img_feats,
-                                                            visual_attention,
-                                                            head_mask=head_mask,
-                                                            encoder_history_states=encoder_history_states)
-
-        # use the CLS token for Multi-Tags classification. Decoding here as the tags.
-        pooled_output = self.pooler(tag_encoder_outputs)
-        logit = self.tag_logit(pooled_output)
-
-        # non-differentiable tokenization
-        with torch.no_grad():
-            offline_logit = torch.nn.functional.sigmoid(logit.detach())
-
-            topk = self.config.topk
-
-            prob, pred_topk = offline_logit.topk(topk, dim=1, largest=True)
-
-            topk_len = (prob >= 0.2).sum(dim=1)
-
-            # iterate all samples
-            for b_idx, pred in enumerate(pred_topk):
-
-                tag_list = [int(t.cpu().numpy()) for t in pred]
-
-                # in case there is no od tag in the image
-                if len(tag_list) == 0:
-                    encoded_tags = torch.as_tensor([102], device=input_ids.get_device())
-                    logging.info('Warning: Zero Tag in this image!')
-                else:
-                    encoded_tags = torch.as_tensor(tag_list, device=input_ids.get_device())[:topk_len[b_idx]]
-                    encoded_tags[-1] = 102
-
-                # training mode, attach it after 20 (default caption length)
-                if topk_len[b_idx] + 20 <= input_ids.shape[1]:
-                    input_ids[b_idx, 20: 20 + topk_len[b_idx]] = encoded_tags
-                    # input_ids[b_idx, -1] = 102
-
-                # inference mode, attach it right after the SEP token.
-                else:
-                    start_id = len(input_ids[b_idx]) - topk_len[b_idx]
-                    input_ids[b_idx, start_id:] = encoded_tags
-                    input_ids[b_idx, -1] = 102
-
-        # textual encoding
-        embedding_output = self.embeddings(input_ids, position_ids=position_ids, token_type_ids=token_type_ids)
-
-        # =========================================== Bert Encoder ==================================================
-
-        # For Tagger CLS token to Visual Tokens
-        encoder_outputs = torch.cat([tag_encoder_outputs[:, 0, :].unsqueeze(1), encoder_outputs], 1)
-        attention_mask = torch.cat([attention_mask, attention_mask[:, -1].unsqueeze(1)], dim=1)
-        attention_mask = torch.cat([attention_mask, torch.ones(attention_mask.shape[0],
-                                                               attention_mask.shape[1], 1).cuda()], dim=2)
-
-        extended_attention_mask = attention_mask.unsqueeze(1)
-        extended_attention_mask = extended_attention_mask.to(
-            dtype=next(self.parameters()).dtype)  # fp16 compatibility
-        extended_attention_mask = (1.0 - extended_attention_mask) * -10000.0
-
-        embedding_output = torch.cat((embedding_output, encoder_outputs), 1)
-
-        decoder_outputs = self.decoder(embedding_output,
-                                       extended_attention_mask,
-                                       head_mask=head_mask,
-                                       encoder_history_states=encoder_history_states)
-        decoder_outputs = decoder_outputs[0]
-
-        # =========================================== CLS Predict ==================================================
-        sequence_output = decoder_outputs
-        pooled_output = self.caption_pooler(sequence_output)
-
-        outputs = (sequence_output, pooled_output,)
-        return outputs, logit  # sequence_output, pooled_output,
-
-
-class c(BertPreTrainedModel):
-
-    def __init__(self, config):
-        super(TaggerEncDecCLSEmbSplitBertImgModel, self).__init__(config)
-
-        self.config = config
-        self.embeddings = BertEmbeddings(config)
-
-        self.extra_embeddings = BertEmbeddings(config)
-
-        self.encoder = TIMMVitSplitEncoder(config)
-
-        # let's simply re-use bert-pooler
-        self.caption_pooler = BertPooler(config)
-
-        # For Tag Prediction
-        self.pooler = BertPooler(config)
-        self.tag_vocab = config.vocab
-        self.tokenizer = config.tokenizer
-
-        if config.category == 'vinvl':
-            caption_vocab_size = config.vocab_size
-            config.vocab_size = len(self.tag_vocab['label_to_idx'])
-            self.tag_logit = BertCaptioningHeads(config)
-            config.vocab_size = caption_vocab_size
-        else:
-            self.tag_logit = BertCaptioningHeads(config)
-
-        self.category = config.category
-
-        self.img_dim = config.img_feature_dim  # 2054 #565
-        logger.info('BertImgModel Image Dimension: {}'.format(self.img_dim))
-
-        self.config = config
-
-        if getattr(config, 'decoder_layer', None):
-            config.num_hidden_layers = config.decoder_layer
-        else:
-            config.num_hidden_layers = 4
-        self.decoder = BertEncoder(config)
-
-        self.img_dim = config.img_feature_dim  # 2054 #565
-        logger.info('BertImgModel Image Dimension: {}'.format(self.img_dim))
-
-        self.img_feature_type = config.img_feature_type
-
-        try:
-            self.use_img_layernorm = config.use_img_layernorm
-        except:
-            self.use_img_layernorm = None
-
-        self.config = config
-        ignore_project_image = hasattr(config, 'ignore_project_image') and config.ignore_project_image
-        if not ignore_project_image:
-            if config.img_feature_type == 'dis_code':
-                self.code_embeddings = nn.Embedding(config.code_voc, config.code_dim, padding_idx=0)
-                self.img_embedding = nn.Linear(config.code_dim, self.config.hidden_size, bias=True)
-            elif config.img_feature_type == 'dis_code_t':  # transpose
-                self.code_embeddings = nn.Embedding(config.code_voc, config.code_dim, padding_idx=0)
-                self.img_embedding = nn.Linear(config.code_size, self.config.hidden_size, bias=True)
-            elif config.img_feature_type == 'dis_code_scale':  # scaled
-                self.input_embeddings = nn.Linear(config.code_dim, config.code_size, bias=True)
-                self.code_embeddings = nn.Embedding(config.code_voc, config.code_dim, padding_idx=0)
-                self.img_embedding = nn.Linear(config.code_dim, self.config.hidden_size, bias=True)
-            else:
-                self.img_embedding = nn.Linear(self.img_dim, self.config.hidden_size, bias=True)
-                self.dropout = nn.Dropout(config.hidden_dropout_prob)
-
-                if self.use_img_layernorm:
-                    if getattr(self.config, 'vinvl', None):
-                        self.img_layer_norm = LayerNormClass(config.hidden_size,
-                                                             eps=config.img_layer_norm_eps)
-                    else:
-                        self.LayerNorm = LayerNormClass(config.hidden_size, eps=config.img_layer_norm_eps)
-        else:
-            self.img_embedding = nn.Identity()
-            self.dropout = nn.Identity()
-
-        self.decoder.apply(self.init_weights)
-        self.embeddings.apply(self.init_weights)
-        self.caption_pooler.apply(self.init_weights)
-
-    def _resize_token_embeddings(self, new_num_tokens):
-        old_embeddings = self.embeddings.word_embeddings
-        new_embeddings = self._get_resized_embeddings(old_embeddings, new_num_tokens)
-        self.embeddings.word_embeddings = new_embeddings
-        return self.embeddings.word_embeddings
-
-    def _prune_heads(self, heads_to_prune):
-        """ Prunes heads of the model.
-            heads_to_prune: dict of {layer_num: list of heads to prune in this layer}
-            See base class PreTrainedModel
-        """
-        for layer, heads in heads_to_prune.items():
-            self.encoder.layer[layer].attention.prune_heads(heads)
-
-    def encode_tag_to_embedding(self, pred_topk, cls_emb=None, caption_len=20):
-        seq_length = pred_topk.size(1)
-
-        # TAG classifier embedding
-        if cls_emb is not None:
-            tag_embedding = F.embedding(pred_topk,
-                                        weight=cls_emb.weight,
-                                        padding_idx=0,
-                                        max_norm=None,
-                                        norm_type=2,
-                                        scale_grad_by_freq=False,
-                                        sparse=False)
-        # BERT Tokenizer embedding
-        else:
-            tag_embedding = self.embeddings.word_embeddings(pred_topk)
-
-        tag_position_ids = torch.arange(seq_length, dtype=torch.long, device=pred_topk.device) + caption_len
-        tag_position_ids = tag_position_ids.unsqueeze(0).expand_as(pred_topk)
-        tag_position_embedding = self.embeddings.position_embeddings(tag_position_ids)
-        tag_token_type_ids = torch.zeros_like(pred_topk)
-        tag_token_type_embedding = self.embeddings.token_type_embeddings(tag_token_type_ids)
-
-        tag_embedding = tag_embedding + tag_position_embedding + tag_token_type_embedding
-        tag_embedding = self.embeddings.LayerNorm(tag_embedding)
-        tag_embedding = self.embeddings.dropout(tag_embedding)
-        return tag_embedding
-
-    def forward(self, input_ids, img_feats=None, label=None, token_type_ids=None, attention_mask=None,
-                position_ids=None, encoder_history_states=None, head_mask=None, cls_emb=None, gen_tag_ratio=None):
-
-        # =========================================== ViT Encoder ==================================================
-        head_mask = [None] * self.config.num_hidden_layers
-
-        # encoder visual attention
-        visual_attention = torch.zeros(img_feats.shape[0], 1, img_feats.shape[-2], img_feats.shape[-2]).cuda()
-
-        # feed the image encodings into the encoder
-        encoder_outputs, tag_encoder_outputs = self.encoder(img_feats,
-                                                            visual_attention,
-                                                            head_mask=head_mask,
-                                                            encoder_history_states=encoder_history_states)
-
-        # use the CLS token for Multi-Tags classification. Decoding here as the tags.
-        pooled_output = self.pooler(tag_encoder_outputs)
-        logit = self.tag_logit(pooled_output)
-
-        # FIXME: non-differentiable tokenization
-        with torch.no_grad():
-            offline_logit = torch.nn.functional.sigmoid(logit.detach())
-            topk = self.config.topk
-            prob, pred_topk = offline_logit.topk(topk, dim=1, largest=True)
-            topk_len = (prob >= 0.2).sum(dim=1)
-
-        # training mode, attach it after 20 (default caption length)
-        if topk_len[0] + 20 <= input_ids.shape[1]:
-
-            if gen_tag_ratio is not None:
-                # fuse the generated tags with GT tags at specific portion X%
-                for batch_idx, lab in enumerate(label):
-                    batch_tag = torch.nonzero(lab, as_tuple=False).squeeze(1)
-                    batch_len = int((1 - gen_tag_ratio) * len(batch_tag))
-                    indices = torch.randperm(batch_len)
-                    batch_tag = batch_tag[indices]
-                    pred_topk[batch_idx, :batch_len] = batch_tag
-
-            pred_topk[:, -1] = 102
-
-            # textual encoding
-            embedding_output = self.embeddings(input_ids, position_ids=position_ids,
-                                               token_type_ids=token_type_ids)
-
-            # using Tag classifier embedding: Use classifier's embedding but BERT tokenizer's position id
-            if getattr(self.config, 'tagemb', None) == 'cls':
-                # tag_embedding = self.encode_tag_to_embedding(pred_topk, cls_emb=cls_emb,)
-                tag_embedding = F.embedding(pred_topk,
-                                            weight=cls_emb.weight,
-                                            padding_idx=0,
-                                            max_norm=None,
-                                            norm_type=2,
-                                            scale_grad_by_freq=False,
-                                            sparse=False)
-
-            # using BERT tokenizer embedding
-            else:
-                # tag_embedding = self.encode_tag_to_embedding(pred_topk, cls_emb=None,)
-                tag_embedding = self.extra_embeddings(pred_topk)
-
-            # apply the tag embedding for concatenation
-            embedding_output[:, -pred_topk.shape[1]:] = tag_embedding
-
-        # inference mode, attach it right after the SEP token.
-        else:
-            start_id = input_ids.shape[1] - topk_len
-            # input_ids[:, start_id:] = encoded_tags
-            input_ids[:, start_id] = 102
-            pred_topk[:, -1] = 102
-
-            # tag encoding
-            if getattr(self.config, 'tagemb', None) == 'cls':
-                tag_embedding = self.encode_tag_to_embedding(pred_topk, cls_emb=cls_emb, )
-            else:
-                # tag_embedding = self.encode_tag_to_embedding(pred_topk, cls_emb=None,)
-                tag_embedding = self.extra_embeddings(pred_topk,
-                                                      position_ids=position_ids[:, -pred_topk.shape[1]:])
-
-            embedding_output = self.embeddings(input_ids, position_ids=position_ids,
-                                               token_type_ids=token_type_ids)
-            embedding_output[:, -pred_topk.shape[1]:] = tag_embedding
-
-        # =========================================== Bert Encoder ==================================================
-        # FIXME: for Tagger CLS token to Visual Tokens
-        encoder_outputs = torch.cat([tag_encoder_outputs[:, 0, :].unsqueeze(1), encoder_outputs], 1)
-        attention_mask = torch.cat([attention_mask, attention_mask[:, -1].unsqueeze(1)], dim=1)
-        attention_mask = torch.cat([attention_mask, torch.ones(attention_mask.shape[0],
-                                                               attention_mask.shape[1], 1).cuda()], dim=2)
-
-        extended_attention_mask = attention_mask.unsqueeze(1)
-        extended_attention_mask = extended_attention_mask.to(
-            dtype=next(self.parameters()).dtype)  # fp16 compatibility
-        extended_attention_mask = (1.0 - extended_attention_mask) * -10000.0
-
-        embedding_output = torch.cat((embedding_output, encoder_outputs), 1)
-
-        decoder_outputs = self.decoder(embedding_output,
-                                       extended_attention_mask,
-                                       head_mask=head_mask,
-                                       encoder_history_states=encoder_history_states)
-        decoder_outputs = decoder_outputs[0]
-
-        # =========================================== CLS Predict ==================================================
-        sequence_output = decoder_outputs
-        pooled_output = self.caption_pooler(sequence_output)
-
-        outputs = (sequence_output, pooled_output,)
-        return outputs, logit  # sequence_output, pooled_output,
-
-
 class BertCaptioningHeads(nn.Module):
     def __init__(self, config):
         super().__init__()
@@ -1109,24 +692,20 @@ class BertCaptioningLoss(nn.Module):
 
 @add_start_docstrings("""Bert Model transformer for image captioning""",
     BERT_START_DOCSTRING)
-class TaggerEncDecSplitForImageCaptioning(BertPreTrainedModel):
+class ViTCAP(BertPreTrainedModel):
     r"""
     Bert for Image Captioning.
     """
     def __init__(self, config):
-        super(TaggerEncDecSplitForImageCaptioning, self).__init__(config)
+        super(ViTCAP, self).__init__(config)
         self.config = config
 
-        # if getattr(config, 'tagemb', None):
-        #     self.bert = TaggerEncDecCLSEmbSplitBertImgModel(config)
-        # else:
-        #     self.bert = TaggerEncDecSplitBertImgModel(config)
-
-        self.bert = TaggerEncDecCLSEmbSplitBertImgModel(config)
+        self.bert = ViTSplitCLSEmbModel(config)
 
         # self.tag_tokenizer = BertEmbeddings(config)
         self.cls = BertCaptioningHeads(config)
 
+        # hinge the weight of tag classifier and caption classifier -> this seems not producing better results
         # self._tie_or_clone_weights(self.tag_tokenizer.word_embeddings, self.cls.predictions.decoder)
 
         self.loss = BertCaptioningLoss(config)
@@ -1173,8 +752,7 @@ class TaggerEncDecSplitForImageCaptioning(BertPreTrainedModel):
                        masked_pos=None, masked_ids=None, token_type_ids=None,
                        position_ids=None, head_mask=None, is_training=True,
                        encoder_history_states=None, return_dict=False, matched=None,
-                       return_hidden=False, return_last_hidden=None, gen_tag_ratio=None,
-                       masked_token=None, ):
+                       return_hidden=False, gen_tag_ratio=None,):
 
         # Forward to compute the tag-gradient
         outputs, tag_logit = self.bert(input_ids,
@@ -1194,10 +772,8 @@ class TaggerEncDecSplitForImageCaptioning(BertPreTrainedModel):
             sequence_output = outputs[0][:, :masked_pos.shape[-1], :]
             # num_masks_in_batch * hidden_size
             if matched is not None:
-                # if it is not matched, we make all the masked pos = 0 to
-                # ignore the loss
-                # do it as in place as we will use it to calculate the acc
-                # somewhere
+                # if it is not matched, we make all the masked pos = 0 to ignore the
+                # loss do it as in place as we will use it to calculate the acc somewhere
                 masked_pos.requires_grad = False
                 masked_pos[matched.logical_not()] = 0
                 # make it as padded id and we will remove
@@ -1349,18 +925,12 @@ class TaggerEncDecSplitForImageCaptioning(BertPreTrainedModel):
     def get_output_embeddings(self):
         return self.decoder
 
-    def generate(self, img_feats, label, attention_mask, masked_pos, token_type_ids=None,
-            position_ids=None, head_mask=None, input_ids=None, max_length=None,
-            do_sample=None, num_beams=None, temperature=None, top_k=None, top_p=None,
-            repetition_penalty=None, bos_token_id=None, pad_token_id=None,
-            eos_token_ids=None, mask_token_id=None, length_penalty=None,
-            num_return_sequences=None,
-            num_keep_best=1, is_decode=None,
-            add_od_labels=False, od_labels_start_posid=None,
-            use_cbs=False, fsm=None, num_constraints=None,
-            min_constraints_to_satisfy=None, use_hypo=False,
-            decoding_constraint_flag=None, bad_ending_ids=None, gen_tag_ratio=None,
-            ):
+    def generate(self, img_feats, label=None, attention_mask=None, masked_pos=None, token_type_ids=None,
+            position_ids=None, head_mask=None, input_ids=None, max_length=None, do_sample=None, num_beams=None,
+            temperature=None, top_k=None, top_p=None, repetition_penalty=None, bos_token_id=None, pad_token_id=None,
+            eos_token_ids=None, mask_token_id=None, length_penalty=None, num_return_sequences=None, num_keep_best=1,
+            is_decode=None, add_od_labels=False, od_labels_start_posid=None, use_cbs=False, fsm=None, num_constraints=None,
+            min_constraints_to_satisfy=None, use_hypo=False, decoding_constraint_flag=None, bad_ending_ids=None, gen_tag_ratio=None,):
         """ Generates captions given image features
         """
         assert is_decode
@@ -1382,24 +952,17 @@ class TaggerEncDecSplitForImageCaptioning(BertPreTrainedModel):
             b, num_fsm_states, f1, v = fsm.shape
             assert b==batch_size and v==vocab_size and f1==num_fsm_states
 
+        # set it to True for inference convenience but d make sure there's no detector tags attached in the end.
         self.add_od_labels = add_od_labels
+
         # avoid position_ids collision of caption and od labels
         self.od_labels_start_posid = max(od_labels_start_posid, self.max_seq_len)
-        if self.add_od_labels:
-            # get od labels part from input_ids
-            assert input_ids.shape[0] == batch_size
-            od_label_ids = input_ids[:, self.max_seq_len:]
-            self.od_labels_len = input_ids.shape[1] - self.max_seq_len
-            input_ids = None
-        else:
-            self.od_labels_len = 0
-            od_label_ids = None
-            # print(input_ids.shape)
-            # print(self.max_seq_len)
 
-            # seems this op needs pad max operation
-            assert input_ids.shape == (batch_size, self.max_seq_len)
-            input_ids = None
+        # get padded od labels part from input_ids
+        assert input_ids.shape[0] == batch_size
+        od_label_ids = input_ids[:, self.max_seq_len:]
+        self.od_labels_len = input_ids.shape[1] - self.max_seq_len
+        input_ids = None
 
         if input_ids is None:
             input_ids = torch.full(
@@ -1741,10 +1304,10 @@ class TaggerEncDecSplitForImageCaptioning(BertPreTrainedModel):
         return cur_ids, torch.full((1,), logprob, device=device)
 
 
-class TaggerEncDecCLSEmbSplitBertImgModel(BertPreTrainedModel):
+class ViTSplitCLSEmbModel(BertPreTrainedModel):
 
     def __init__(self, config):
-        super(TaggerEncDecCLSEmbSplitBertImgModel, self).__init__(config)
+        super(ViTSplitCLSEmbModel, self).__init__(config)
 
         self.config = config
         self.embeddings = BertEmbeddings(config)
@@ -1793,31 +1356,9 @@ class TaggerEncDecCLSEmbSplitBertImgModel(BertPreTrainedModel):
             self.use_img_layernorm = None
 
         self.config = config
-        ignore_project_image = hasattr(config, 'ignore_project_image') and config.ignore_project_image
-        if not ignore_project_image:
-            if config.img_feature_type == 'dis_code':
-                self.code_embeddings = nn.Embedding(config.code_voc, config.code_dim, padding_idx=0)
-                self.img_embedding = nn.Linear(config.code_dim, self.config.hidden_size, bias=True)
-            elif config.img_feature_type == 'dis_code_t':  # transpose
-                self.code_embeddings = nn.Embedding(config.code_voc, config.code_dim, padding_idx=0)
-                self.img_embedding = nn.Linear(config.code_size, self.config.hidden_size, bias=True)
-            elif config.img_feature_type == 'dis_code_scale':  # scaled
-                self.input_embeddings = nn.Linear(config.code_dim, config.code_size, bias=True)
-                self.code_embeddings = nn.Embedding(config.code_voc, config.code_dim, padding_idx=0)
-                self.img_embedding = nn.Linear(config.code_dim, self.config.hidden_size, bias=True)
-            else:
-                self.img_embedding = nn.Linear(self.img_dim, self.config.hidden_size, bias=True)
-                self.dropout = nn.Dropout(config.hidden_dropout_prob)
 
-                if self.use_img_layernorm:
-                    if getattr(self.config, 'vinvl', None):
-                        self.img_layer_norm = LayerNormClass(config.hidden_size,
-                                                             eps=config.img_layer_norm_eps)
-                    else:
-                        self.LayerNorm = LayerNormClass(config.hidden_size, eps=config.img_layer_norm_eps)
-        else:
-            self.img_embedding = nn.Identity()
-            self.dropout = nn.Identity()
+        self.img_embedding = nn.Identity()
+        self.dropout = nn.Identity()
 
         self.decoder.apply(self.init_weights)
         self.embeddings.apply(self.init_weights)
@@ -1890,7 +1431,7 @@ class TaggerEncDecCLSEmbSplitBertImgModel(BertPreTrainedModel):
             prob, pred_topk = offline_logit.topk(topk, dim=1, largest=True)
             topk_len = (prob >= 0.2).sum(dim=1)
 
-        # training mode, attach it after 20 (default caption length)
+        # Training mode. Attach it after 20th token (default caption length)
         if topk_len[0] + 20 <= input_ids.shape[1]:
 
             if gen_tag_ratio is not None:
@@ -1928,7 +1469,7 @@ class TaggerEncDecCLSEmbSplitBertImgModel(BertPreTrainedModel):
             # apply the tag embedding for concatenation
             embedding_output[:, -pred_topk.shape[1]:] = tag_embedding
 
-        # inference mode, attach it right after the SEP token.
+        # Inference mode. Attach it right after the SEP token.
         else:
             start_id = input_ids.shape[1] - topk_len
             # input_ids[:, start_id:] = encoded_tags

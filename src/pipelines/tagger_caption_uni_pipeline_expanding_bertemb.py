@@ -6,7 +6,7 @@ from src.data_layer.builder import collate_fn
 from src.pipelines.uni_pipeline import UniPipeline
 from src.data_layer.dataset import TransCaptionTensorizer
 from src.data_layer.dataset import Tensorizer, pert_collate_fn
-from src.layers.bert import TaggerEncDecSplitForImageCaptioning
+from src.layers.bert import ViTCAP
 from src.data_layer.dataset import CaptionIdxTSVDataset, ImageIdxTSVDataset
 from src.data_layer.transform import (
     LoadLabel,
@@ -17,6 +17,7 @@ from src.data_layer.transform import (
     RemoveUselessKeys,
     RenameKey,
 )
+
 
 
 class ImageCaptioning(nn.Module):
@@ -109,28 +110,10 @@ class ImageCaptioning(nn.Module):
             self.construct_attn_mask(data)
 
             if 'image' in data: data.pop('image')
-            if 'image2' in data: data.pop('image2')
-            if 'image3' in data: data.pop('image3')
-            if 'image_ori' in data: data.pop('image_ori')
-            if 'image2_ori' in data: data.pop('image2_ori')
-            if 'image3_ori' in data: data.pop('image3_ori')
 
         if self.training:
 
             matched = data.get('matched')
-
-            # # FLOPS Computation, this is optional and needed to be commented later.
-            # from fvcore.nn import FlopCountAnalysis, flop_count_table, flop_count_str
-            # self.module.eval()
-            # with torch.no_grad():
-            #     flop = FlopCountAnalysis(self.module, inputs=(data['input_ids'], data['img_feats'], data['attention_mask'],
-            #                                                   data['label'], data['masked_pos'], data['masked_ids'],
-            #                                                   data['token_type_ids']))
-            #     print(flop)
-            #     # print(flop_count_table(flop, max_depth=4))
-            #     print(flop_count_str(flop))
-            #     print(flop.total())
-
             result = self.module(**data, return_dict=True)
             loss_dict = {}
 
@@ -183,7 +166,7 @@ class ImageCaptioning(nn.Module):
             # self.module, where we clear out the masked pos. That logic can be
             # moved to collate function also.
 
-            # FIXME: use 10X multiplier to the caption loss.
+            # FIXME: use nX multiplier to the caption loss.
             loss_dict['masked_loss'] = result['masked_loss']
             return loss_dict
 
@@ -337,6 +320,7 @@ class CaptionUniPipeline(UniPipeline):
         # model.module.module.bert.extra_embeddings            1e-4
 
         # Manually lower the LR for CTN blocks as it's already pre-trained with good initialization, use smaller LR.
+        # Tune the LR multiplier yield some performances fluctuations. In my exp, 0.1 leads to optimal results than 1.0 and 0.01.
         l = getattr(model.module.module.config, 'split_blocks', 4)
         image_encoder = self.get_parameter_groups(model.module.image_encoder                   )
         embedding = self.get_parameter_groups(model.module.module.bert.embeddings              )
@@ -404,6 +388,7 @@ class CaptionUniPipeline(UniPipeline):
 
         # by default, we don't load detector features
         assert not load_feature
+
         # load image and we will extract the features online. This is mainly
         # used for end-to-end training or inference.
         image_loader = LoadImage(data, split)
@@ -467,33 +452,65 @@ class CaptionUniPipeline(UniPipeline):
         trans_tensorizer = Tensorizer(self.tagger_tensorizer)
         all_trans.append(trans_tensorizer)
 
-        useless_keys = [
-            'idx',
-            'idx_img',
-            'idx_cap',
-            'dataset',
-            # 'label',
-            'caption',
-            'text_ab_type',
-            'text_a',
-            # remove the labels as we don't need them in input_ids
-            'text_b',
-            'width',
-            'height',
-            'text_changed',
-            'text_a_or_b_changed',
-            'img_feat',
-            'max_seq_a_len',
-            'seq_a_padded_len',
-            'feats_conf',
-            'feats_class',
-            'teacher_feats_conf',
-            'teacher_feats_class',
-            'vocab_size',
-            'feats_class_token_ids',
-            'feats_class_tokens',
-            'origin_input_ids',
-        ]
+        # Remove some annotations that won't be used.
+        if split == 'train':
+            useless_keys = [
+                'idx',
+                'idx_img',
+                'idx_cap',
+                'dataset',
+                # 'label',
+                'caption',
+                'text_ab_type',
+                'text_a',
+                # remove the labels as we don't need them in input_ids
+                'text_b',
+                'width',
+                'height',
+                'text_changed',
+                'text_a_or_b_changed',
+                'img_feat',
+                'max_seq_a_len',
+                'seq_a_padded_len',
+                'feats_conf',
+                'feats_class',
+                'teacher_feats_conf',
+                'teacher_feats_class',
+                'vocab_size',
+                'feats_class_token_ids',
+                'feats_class_tokens',
+                'origin_input_ids',
+            ]
+        else:
+            # In inference mode, remove the detector tags to prevent the case when accidentally using detector tag during testing.
+            useless_keys = [
+                'idx',
+                'idx_img',
+                'idx_cap',
+                'dataset',
+                'label',
+                'caption',
+                'text_ab_type',
+                'text_a',
+                # remove the labels as we don't need them in input_ids
+                'text_b',
+                'width',
+                'height',
+                'text_changed',
+                'text_a_or_b_changed',
+                'img_feat',
+                'max_seq_a_len',
+                'seq_a_padded_len',
+                'feats_conf',
+                'feats_class',
+                'teacher_feats_conf',
+                'teacher_feats_class',
+                'vocab_size',
+                'feats_class_token_ids',
+                'feats_class_tokens',
+                'origin_input_ids',
+            ]
+
         all_trans.extend([
             RemoveUselessKeys(useless_keys),
             RenameKey({'segment_ids': 'token_type_ids'}),
@@ -548,7 +565,7 @@ class CaptionUniPipeline(UniPipeline):
 
     def get_raw_model(self, is_train):
         config = self.get_fusion_config(is_train)
-        model = TaggerEncDecSplitForImageCaptioning(config=config) # init from scratch
+        model = ViTCAP(config=config) # init from scratch
 
         image_encoder = self.get_image_encoder_model(is_train,)
 
@@ -619,7 +636,7 @@ class CaptionUniPipeline(UniPipeline):
             dataset._data_root,
             self.cfg.test_split + '.caption_coco_format.json')
         if not op.isfile(json_caption):
-            from src.qd.process_tsv import iter_caption_to_json
+            from src.tools.tsv.tsv_io import iter_caption_to_json
             iter_caption_to_json(
                 dataset.iter_data(
                     self.cfg.test_split, 'caption'),

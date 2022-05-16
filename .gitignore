@@ -1,0 +1,13 @@
+output/
+data/
+checkpoint/
+*.pyc
+__pycache__
+**/coco_caption/
+.git
+.idea
+**/coco_caption
+**/cider/data/
+/src/qd/mask/modeling/captioning/coco_caption/
+/src/qd/mask/modeling/captioning/cider/data/
+

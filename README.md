@@ -20,6 +20,8 @@
   `conda install pytorch==1.6.0 torchvision==0.7.0 cudatoolkit=10.1 -c pytorch`
   
   `pip install -r requirements.txt`
+  
+  Construct the coco_caption tool, place the [coco_caption]() in `./src/tools/captioning`, then execute `./get_stanford_models.sh`. Place the [cider]() tool in `./src/tools/captioning` for CIDEr metric computation. 
 
  ## Dataset
   
@@ -33,6 +35,17 @@
  ## Training & Evaluation
  The bellowing commands will do the training & evaluation.
  
+ To conduct evaluation, modify the `type` in the YAML file to `pipeline_eval_multi`, and run:
+ ```
+    python run.py -c ./yaml/XXX.yaml
+ ```
+ 
+ For example, to use the pre-trained checkpoint for evaluation, copy
+ ```
+    ./checkpoint/Logit_Vilt_captioning_testing_batch-size_512_encoder_vit_base_patch16_384_lr_1e-4_iter_60_vitbfocal20_bert_tokenizer_tags_ENC-DEC_multiplier_0.1_expand_tag-classifier_emb.pt
+ ```
+ to `./output/XXX/snapshot/model_iter_XXX.pt`. XXX depends on the batch size, and you will get a prompt <em>no model_iter_XXX.pt checkpoint found</em> if not correct, and just rename it would be fine accordingly.
+
  To conduct the CIDEr optimization, run the following command. Note that CIDEr optimization consumes large memories and I just randomly sample just 200 tokens for training on my V100 with 32GB memories. This probably indicates that better CIDEr scores might be reached using a larger memory device or better sampling method.
  
  
@@ -44,9 +57,9 @@
  
  The training log of can be found in [here](./checkpoint/Logit_Vilt_captioning_testing_batch-size_512_encoder_vit_base_patch16_384_lr_1e-4_iter_60_vitbfocal20_bert_tokenizer_tags_ENC-DEC_multiplier_0.1_expand_tag-classifier_emb.txt). The results across difference epochs are shown as below:
  
- <img src="images/map_TaxCocoCaption_test_Bleu_4.png" width="180">   <img src="images/map_TaxCocoCaption_test_CIDEr.png" width="180"> 
- <img src="images/map_TaxCocoCaption_test_METEOR.png" width="180">   <img src="images/map_TaxCocoCaption_test_ROUGE_L.png" width="180"> 
- <img src="images/map_TaxCocoCaption_test_SPICE.png" width="180"> 
+ <img src="images/map_TaxCocoCaption_test_Bleu_4.png" width="160">   <img src="images/map_TaxCocoCaption_test_CIDEr.png" width="160"> 
+ <img src="images/map_TaxCocoCaption_test_METEOR.png" width="160">   <img src="images/map_TaxCocoCaption_test_ROUGE_L.png" width="160"> 
+ <img src="images/map_TaxCocoCaption_test_SPICE.png" width="160"> 
  
  From left to right: <em> BLEU-4, CIDEr, METEOR, ROUGE, SPICE </em>.
     

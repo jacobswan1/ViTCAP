@@ -1,14 +1,10 @@
-# from src.tools.torch_common import evaluate_topk
+from src.tools.torch_common import evaluate_topk
 from src.tools.tsv.tsv_io import reorder_tsv_keys
-# from src.qd.process_tsv import delete_tsv_files
-# from src.qd.process_tsv import concat_tsv_files
-# from src.tools.common import create_vis_net_file
 import src.data_layer.samplers as samplers
 from src.tools.torch_common import recursive_to_device
 from src.tools.common import save_parameters
 from src.tools.opt.trainer import do_train_dict
 from tqdm import tqdm
-
 from src.tools.common import write_to_yaml_file
 from src.tools.common import load_from_yaml_file
 from src.tools.common import worth_create
@@ -21,7 +17,6 @@ from src.tools.tsv.tsv_io import TSVDataset
 from shutil import copyfile
 import os
 import copy
-import random
 import torch.nn.parallel
 import torch.distributed as dist
 import torch.optim
@@ -372,8 +367,7 @@ class UniPipeline(object):
         if self.mpi_rank == 0 and not self.cfg.debug_train:
             # save the code after training
             from src.tools.common import zip_qd, try_delete
-            # we'd better to delete it since it seems like zip will read/write
-            # if there is
+            # we'd better to delete it since it seems like zip will read/write if there is
             source_code = op.join(self.output_folder, 'source_code.zip')
             if op.isfile(source_code):
                 try_delete(source_code)
@@ -767,7 +761,7 @@ class UniPipeline(object):
             from src.qd.layers import MergeBatchNorm
             model = MergeBatchNorm(model)
             logging.info('after merging bn = {}'.format(model))
-        from src.qd.layers import ForwardPassTimeChecker
+        from src.layers import ForwardPassTimeChecker
         model = ForwardPassTimeChecker(model)
         model = model.to(self.cfg.device)
         model.eval()
@@ -823,6 +817,7 @@ class UniPipeline(object):
             cache_files = [self.get_rank_specific_tsv(predict_result_file, i)
                 for i in range(self.mpi_size)]
             before_reorder = predict_result_file + '.before.reorder.tsv'
+            from src.tools.tsv.tsv_io import concat_tsv_files, delete_tsv_files
             concat_tsv_files(cache_files, before_reorder)
             # in distributed testing, some images might be predicted by
             # more than one worker since the distributed sampler only
@@ -1230,21 +1225,6 @@ def get_transform_image(self, is_train):
         # TIMM style
         from src.pipelines.uni_pipeline import get_transform_vit_default
         transform = get_transform_vit_default(self, is_train=is_train)
-    elif train_transform == 'contrastive_vit':
-        from src.pipelines.uni_pipeline import get_transform_contrastive_vit_default
-        transform = get_transform_contrastive_vit_default(self, is_train=is_train)
-    elif train_transform == 'inception':
-        from src.pipelines.uni_pipeline import get_transform_incepion
-        transform = get_transform_incepion(self, is_train)
-        assert self.cfg.test_respect_ratio_max is None
-    elif train_transform == 'rand_cut':
-        from src.pipelines.uni_pipeline import get_transform_rand_cut
-        transform = get_transform_rand_cut(self, is_train)
-        assert self.cfg.test_respect_ratio_max is None
-    elif train_transform == 'clip_vit':
-        # CLIP ViT style
-        from src.pipelines.uni_pipeline import get_transform_clip_vit_default
-        transform = get_transform_clip_vit_default(self, is_train=is_train)
     else:
         raise NotImplementedError(train_transform)
     return transform
@@ -1284,295 +1264,6 @@ def get_transform_vit_default(self, is_train):
 
     return transform
 
-
-def get_transform_clip_vit_default(self, is_train):
-    normalize = transforms.Normalize(
-        mean=[0.48145466, 0.4578275, 0.40821073], std=[0.26862954, 0.26130258, 0.27577711])
-    if not is_train:
-        trans = [
-            BGR2RGB(),
-            transforms.ToPILImage(),
-        ]
-        if self.cfg.test_respect_ratio_max:
-            from src.data_layer.transform import MinMaxResizeForTest
-            trans.extend([
-                MinMaxResizeForTest(self.cfg.test_crop_size, self.cfg.test_respect_ratio_max)
-            ])
-        else:
-            trans.extend([
-                transforms.Resize(int(math.floor(self.cfg.test_crop_size / self.cfg.crop_pct)), PIL.Image.BICUBIC),
-                transforms.CenterCrop(self.cfg.test_crop_size),
-            ]),
-        trans.extend([
-            transforms.ToTensor(),
-            normalize,
-        ])
-        transform = transforms.Compose(trans)
-    else:
-        from src.data_layer.transform import get_inception_train_transform
-        transform = get_inception_train_transform(
-            bgr2rgb=True,
-            crop_size=self.cfg.train_crop_size,
-            normalize=normalize,
-            small_scale=self.cfg.input_small_scale,
-        )
-    return transform
-
-
-def get_transform_contrastive_vit_default(self, is_train):
-    normalize = transforms.Normalize(
-        mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5])
-    if not is_train:
-        trans = [
-            BGR2RGB(),
-            transforms.ToPILImage(),
-        ]
-        if self.cfg.test_respect_ratio_max:
-            from src.data_layer.transform import MinMaxResizeForTest
-            trans.extend([
-                MinMaxResizeForTest(self.cfg.test_crop_size, self.cfg.test_respect_ratio_max)
-            ])
-        else:
-            trans.extend([
-                transforms.Resize(int(math.floor(self.cfg.test_crop_size / self.cfg.crop_pct)), PIL.Image.BICUBIC),
-                transforms.CenterCrop(self.cfg.test_crop_size),
-            ]),
-        trans.extend([
-            transforms.ToTensor(),
-            normalize,
-        ])
-        transform = transforms.Compose(trans)
-    else:
-
-        class GaussianBlur(object):
-            """Gaussian blur augmentation in SimCLR https://arxiv.org/abs/2002.05709"""
-
-            def __init__(self, sigma=[.1, 2.]):
-                self.sigma = sigma
-
-            def __call__(self, x):
-                from PIL import ImageFilter
-                sigma = random.uniform(self.sigma[0], self.sigma[1])
-                x = x.filter(ImageFilter.GaussianBlur(radius=sigma))
-                return x
-
-        # MoCo-style transformation
-        transform = transforms.Compose([
-            transforms.RandomResizedCrop(384, scale=(0.2, 1.)),
-            transforms.RandomApply([
-                transforms.ColorJitter(0.4, 0.4, 0.4, 0.1)  # not strengthened
-            ], p=0.8),
-            transforms.RandomGrayscale(p=0.2),
-            transforms.RandomApply([GaussianBlur([.1, 2.])], p=0.5),
-            transforms.RandomHorizontalFlip(),
-            transforms.ToTensor(),
-            normalize
-        ])
-
-    return transform
-
-
-def get_transform_incepion(self, is_train):
-    if is_train:
-        from src.data_layer.transform import get_inception_train_transform
-        transform = get_inception_train_transform(
-            bgr2rgb=True, crop_size=self.cfg.train_crop_size)
-    else:
-        resize_size = self.cfg.test_resize_size
-        if resize_size is None:
-            resize_size = 256 * self.cfg.test_crop_size // 224
-        from src.data_layer.transform import get_inception_test_transform
-        transform = get_inception_test_transform(
-            bgr2rgb=True,
-            resize_size=resize_size,
-            crop_size=self.cfg.test_crop_size,
-            crop_position=self.cfg.test_crop_position,
-            with_crop=not self.cfg.no_crop,
-        )
-
-    return transform
-
-
-def get_transform_rand_cut(self, is_train):
-    if not is_train:
-        return get_transform_incepion(self, is_train)
-
-    from src.data_layer.transform import get_data_normalize
-
-    normalize = get_data_normalize()
-    totensor = transforms.ToTensor()
-    if self.cfg.min_size_range32 is None:
-        all_trans = []
-        all_trans.append(BGR2RGB())
-        from src.data_layer.rand_augmentation import rand_augment_transform
-
-        # this is default
-        config_str = 'rand-m9-mstd0.5'
-        fillcolor = [0.5, 0.5, 0.5]
-        hparams = dict(
-            translate_const=int(self.cfg.train_crop_size * 0.45),
-            img_mean=tuple([min(255, round(255 * x)) for x in fillcolor]),
-        )
-
-        all_trans.extend([
-            transforms.ToPILImage(),
-            transforms.RandomResizedCrop(self.cfg.train_crop_size),
-            transforms.RandomHorizontalFlip(),
-            rand_augment_transform(config_str, hparams),
-            totensor,
-            normalize,
-            transforms.RandomApply([ImageCutout(1./self.cfg.cutout_factor)], p=0.5),
-        ])
-        data_augmentation = transforms.Compose(all_trans)
-    else:
-        first_trans = []
-        first_trans.append(BGR2RGB())
-        from src.data_layer.rand_augmentation import rand_augment_transform
-
-        # this is default
-        config_str = 'rand-m9-mstd0.5'
-        fillcolor = [0.5, 0.5, 0.5]
-        hparams = dict(
-            translate_const=int(self.cfg.train_crop_size * 0.45),
-            img_mean=tuple([min(255, round(255 * x)) for x in fillcolor]),
-        )
-
-        first_trans.extend([
-            transforms.ToPILImage(),
-        ])
-        first_trans = transforms.Compose(first_trans)
-        first_trans = ImageTransform2Dict(first_trans)
-        from src.data_layer.transform import RandomResizedCropMultiSize
-        all_size = list(range(self.cfg.min_size_range32[0], self.cfg.min_size_range32[1] + 31, 32))
-        if self.cfg.train_crop_size not in all_size:
-            all_size.append(self.cfg.train_crop_size)
-        second_trans = RandomResizedCropMultiSize(all_size)
-        third_trans = [
-            transforms.RandomHorizontalFlip(),
-            rand_augment_transform(config_str, hparams),
-            totensor,
-            normalize,
-            transforms.RandomApply([ImageCutout(1./self.cfg.cutout_factor)], p=0.5),
-        ]
-        third_trans = transforms.Compose(third_trans)
-        third_trans = ImageTransform2Dict(third_trans)
-        data_augmentation = transforms.Compose([
-            first_trans, second_trans, third_trans])
-    return data_augmentation
-
-
-# --------------------------
-# def get_cls_criterion(self):
-#     if self.cfg.dataset_type in [
-#             'crop', 'single_dict', 'io']:
-#         if self.cfg.loss_type == 'NTXent':
-#             from src.qd.layers.ntxent_loss import NTXentLoss
-#             criterion = NTXentLoss(self.cfg.temperature, self.cfg.correct_loss)
-#         elif self.cfg.loss_type == 'NTXentQueue':
-#             from src.qd.layers.ntxent_loss import NTXentQueueLoss
-#             criterion = NTXentQueueLoss(self.cfg.temperature,
-#                                         self.cfg.queue_size,
-#                                         self.cfg.out_dim,
-#                                         self.cfg.queue_alpha,
-#                                         alpha_max=self.cfg.queue_alpha_max,
-#                                         alpha_policy=self.cfg.queue_alpha_policy,
-#                                         max_iter=self.cfg.max_iter,
-#                                         criterion_type=self.cfg.criterion_type,
-#                                         denominator_ce_factor=self.cfg.denominator_ce_factor
-#                                         )
-#         elif self.cfg.loss_type == 'SwAV':
-#             from src.qd.layers.ntxent_loss import SwAVQueueLoss
-#             criterion = SwAVQueueLoss(
-#                 self.cfg.temperature,
-#                 cluster_size=self.cfg.cluster_size,
-#                 queue_size=self.cfg.queue_size,
-#                 involve_queue_after=self.cfg.involve_queue_after,
-#                 dim=self.cfg.out_dim)
-#         elif self.cfg.loss_type == 'SimpleQueue':
-#             from src.qd.layers.ntxent_loss import SimpleQueueLoss
-#             criterion = SimpleQueueLoss(self.cfg.temperature,
-#                                         self.cfg.queue_size,
-#                                         self.cfg.out_dim,
-#                                         self.cfg.queue_alpha,
-#                                         alpha_max=self.cfg.queue_alpha_max,
-#                                         alpha_policy=self.cfg.queue_alpha_policy,
-#                                         max_iter=self.cfg.max_iter,
-#                                         criterion_type=self.cfg.criterion_type,
-#                                         denominator_ce_factor=self.cfg.denominator_ce_factor
-#                                         )
-#         elif self.cfg.loss_type == 'NoisyDis':
-#             from src.qd.layers.ntxent_loss import NoisyDiscriminator
-#             criterion = NoisyDiscriminator(self.cfg.out_dim)
-#         elif self.cfg.loss_type == 'multi_ce':
-#             from src.qd.layers.loss import MultiCrossEntropyLoss
-#             criterion = MultiCrossEntropyLoss(weights=self.cfg.multi_ce_weights)
-#         elif self.cfg.loss_type == 'dist_ce':
-#             from src.qd.layers.loss import DistilCrossEntropyLoss
-#             criterion = DistilCrossEntropyLoss(self.cfg.dist_ce_weight)
-#         elif self.cfg.loss_type == 'smooth_ce':
-#             from src.qd.layers.loss import SmoothLabelCrossEntropyLoss
-#             criterion = SmoothLabelCrossEntropyLoss(eps=self.cfg.smooth_label_eps)
-#         elif self.cfg.loss_type == 'ExCE':
-#             from src.qd.layers.loss import ExclusiveCrossEntropyLoss
-#             criterion = ExclusiveCrossEntropyLoss(2.)
-#         elif self.cfg.loss_type == 'kl_ce':
-#             from src.qd.layers.loss import KLCrossEntropyLoss
-#             criterion = KLCrossEntropyLoss()
-#         elif self.cfg.loss_type == 'multi_klce':
-#             from src.qd.layers.loss import MultiKLCrossEntropyLoss
-#             criterion = MultiKLCrossEntropyLoss()
-#         elif self.cfg.loss_type == 'l2':
-#             from src.qd.layers.loss import L2Loss
-#             criterion = L2Loss()
-#         elif self.cfg.loss_type == 'mo_dist_ce':
-#             from src.qd.layers.loss import DistillCrossEntropyLoss
-#             criterion = DistillCrossEntropyLoss(
-#                 num_image=self.cfg.get_num_training_images(),
-#                 num_class=self.cfg.get_num_classes(),
-#                 momentum=self.cfg.dist_ce_momentum,
-#                 dist_weight=self.cfg.dist_weight,
-#             )
-#         elif self.cfg.loss_type == 'eff_fpn_ce':
-#             from src.qd.layers.loss import EfficientDetCrossEntropy
-#             criterion = EfficientDetCrossEntropy(
-#                 no_reg=self.cfg.no_reg,
-#                 sep=self.cfg.sep,
-#             )
-#         else:
-#             criterion = nn.CrossEntropyLoss().cuda()
-#     elif self.cfg.dataset_type in ['soft_assign']:
-#         from src.qd.layers.kl_div_logit_loss import KLDivLogitLoss
-#         criterion = KLDivLogitLoss()
-#     elif self.cfg.dataset_type == 'multi_hot':
-#         if self.cfg.loss_type == 'BCEWithLogitsLoss':
-#             criterion = nn.BCEWithLogitsLoss().cuda()
-#         elif self.cfg.loss_type == 'BCELogitsNormByPositive':
-#             from src.qd.layers.loss import BCELogitsNormByPositive
-#             criterion = BCELogitsNormByPositive()
-#         elif self.cfg.loss_type == 'MultiHotCrossEntropyLoss':
-#             criterion = MultiHotCrossEntropyLoss()
-#         else:
-#             raise Exception('not support value {}'.format(self.cfg.loss_type))
-#     elif self.cfg.dataset_type == 'multi_hot_neg':
-#         assert self.cfg.loss_type == 'BCEWithLogitsNegLoss'
-#         criterion = BCEWithLogitsNegLoss()
-#     else:
-#         raise NotImplementedError
-#     return criterion
-
-
-def get_raw_timm_model(self, is_train):
-    net = self.cfg.net[5:]
-    model = timm.create_model(
-        net,
-        pretrained=self.cfg.pretrained,
-    )
-    criterion = get_cls_criterion(self)
-    if is_train:
-        model = ModelLoss(model, criterion)
-    else:
-        model = InputAsDict(model)
-    return model
 
 
 def get_parameter_groups(self, model):

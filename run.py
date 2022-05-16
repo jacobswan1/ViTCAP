@@ -4,12 +4,11 @@ import os.path as op
 from pprint import pformat
 from src.tools.common import execute_func
 from src.tools.common import init_logging
-from src.tools.common import dict_update_nested_dict
-from src.tools.common import dict_ensure_path_key_converted
-from src.tools.common import parse_general_args
-
-from src.tools.qd_pytorch import load_latest_parameters
 from src.tools.common import print_frame_info
+from src.tools.common import parse_general_args
+from src.tools.common import dict_update_nested_dict
+from src.tools.qd_pytorch import load_latest_parameters
+from src.tools.common import dict_ensure_path_key_converted
 
 
 def create_pipeline(kwargs):
@@ -55,7 +54,10 @@ def pipeline_train_eval_multi(all_test_data, param, **kwargs):
     if len(all_test_data) > 0:
         dict_update_nested_dict(curr_param, all_test_data[0])
     pip = create_pipeline(curr_param)
+
+    # training script
     pip.ensure_train()
+
     full_expid = pip.full_expid
     param['full_expid'] = full_expid
     for test_data_info in all_test_data:
@@ -73,6 +75,7 @@ def pipeline_train_eval_multi(all_test_data, param, **kwargs):
             dict_update_nested_dict(curr_param, test_data_info)
             pip = load_pipeline(**curr_param)
             pip.monitor_train()
+
     return full_expid
 
 

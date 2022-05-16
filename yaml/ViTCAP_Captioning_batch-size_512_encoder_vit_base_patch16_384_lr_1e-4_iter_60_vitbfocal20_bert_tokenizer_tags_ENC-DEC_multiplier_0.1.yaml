@@ -2,7 +2,8 @@ all_test_data:
 - test_data: ViTCAPCOCO
   test_split: test
 param:
-    data: TaxCocoCaptionSmall
+    dist_url_tcp_port: 12347
+    data: ViTCAPCOCO
     drop_out: 0
     net: B
     mask_type: seq2seq
@@ -19,6 +20,7 @@ param:
     test_crop_size: 384
     train_crop_size: 384
     train_transform: vit
+    WORLD_SIZE: 3
     use_img_layernorm: False
     expid: ViTCAP_batch-size_512_encoder_vit_base_patch16_384_lr_1e-4_iter_60_vitbfocal20_bert_tokenizer_tags_ENC-DEC_multiplier_0.1_expand_tag-classifier_emb
     full_expid: ViTCAP_batch-size_512_encoder_vit_base_patch16_384_lr_1e-4_iter_60_vitbfocal20_bert_tokenizer_tags_ENC-DEC_multiplier_0.1_expand_tag-classifier_emb
@@ -26,8 +28,8 @@ param:
     expid_prefix: Jacob
     pad_to_max: True
     add_od_labels: True
-    effective_batch_size: 2
-    test_batch_size: 16
+    effective_batch_size: 64
+    test_batch_size: 48
     max_iter: 30e
     ignore_project_image: True
     input_small_scale: 0.08
@@ -44,7 +46,7 @@ param:
     train_label_version: vinvl
     loss: focal
     category: bert
-    encode: bert              # nltk: use only JJ and NN as expanding tags; bert: using all words as tags
+    encode: nltk              # nltk: use only JJ and NN as expanding tags; bert: using all words as tags
     force_train: True
     force_predict: True
     pipeline_type:
