@@ -55,10 +55,13 @@
  ```
  to `./output/XXX/snapshot/model_iter_XXX.pt`. XXX depends on the batch size, and you will get a prompt <em>no model_iter_XXX.pt checkpoint found</em> if not correct, and just rename it would be fine accordingly.
  If everything is correct, this should give your the results of ViTCAP:
- 
+ <center>
+
 BLEU-4 | CIDEr  | METEOR | ROUGE | SPICE |
 ---------|---------|---------|---------|---------|
-35.7  |   121.8 | 28.8 | 57.6 | 22.1
+35.7  |   121.8 |  28.8  | 57.6 | 22.1
+
+</center>
 
  To conduct the CIDEr optimization, modify `scst` to True and tune `scst_num_return` if GPU memory is not sufficient. Note that CIDEr optimization consumes very large memories and I just randomly sample just 70% tokens and reduce batch size and `scst_num_return` to 2 for training on my V100 devices. This probably indicates that better CIDEr score is very likely to be reached if using a larger memory device (say, A100) or better sampling method or larger scst_num_return number.
  
