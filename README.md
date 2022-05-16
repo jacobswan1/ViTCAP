@@ -35,9 +35,19 @@
  ## Training & Evaluation
  The bellowing commands will do the training & evaluation.
  
- To conduct evaluation, modify the `type` in the YAML file to `pipeline_eval_multi`, and run:
+ To conduct the training (optimized by cross-entropy), modify the `type` in the YAML file to `pipeline_train_eval_multi`, and run:
+  ```
+    python run.py -c ./yaml/ViTCAP_Captioning_batch-size_512_encoder_vit_base_patch16_384_lr_1e-4_iter_60_vitbfocal20_bert_tokenizer_tags_ENC-DEC_multiplier_0.1.yaml.yaml
  ```
-    python run.py -c ./yaml/XXX.yaml
+ 
+ <em> Note: there seems to have an error when I try to initialize the PyTorch DDP mode in my local machine. As I previously conduct the whole experiments on Azure, which were bug-free, I'm not sure what leads to the DDP mode error in my local machine at this time but probably they should be good in your machine. Due to my limit time, I'll try fix this bug in future. But regularly, to start the DDP job, set the MASTER_ADDR, WORLD_SIZE parameters in ubuntu enrivon. The trainer should be able to auto start the DDP training. </em>
+
+ 
+ <br> 
+ To conduct evaluation, modify the `type` in the YAML file to `pipeline_eval_multi`, and run:
+ 
+ ```
+    python run.py -c ./yaml/ViTCAP_Captioning_batch-size_512_encoder_vit_base_patch16_384_lr_1e-4_iter_60_vitbfocal20_bert_tokenizer_tags_ENC-DEC_multiplier_0.1.yaml.yaml
  ```
  
  For example, to use the pre-trained checkpoint for evaluation, copy
@@ -46,7 +56,7 @@
  ```
  to `./output/XXX/snapshot/model_iter_XXX.pt`. XXX depends on the batch size, and you will get a prompt <em>no model_iter_XXX.pt checkpoint found</em> if not correct, and just rename it would be fine accordingly.
 
- To conduct the CIDEr optimization, run the following command. Note that CIDEr optimization consumes large memories and I just randomly sample just 200 tokens for training on my V100 with 32GB memories. This probably indicates that better CIDEr scores might be reached using a larger memory device or better sampling method.
+ To conduct the CIDEr optimization, modify `scst` to True and tune `scst_num_return` if GPU memory is not sufficient. Note that CIDEr optimization consumes very large memories and I just randomly sample just 70% tokens and reduce batch size and `scst_num_return` to 2 for training on my V100 devices. This probably indicates that better CIDEr score is very likely to be reached if using a larger memory device (say, A100) or better sampling method or larger scst_num_return number.
  
  
  ## Checkpoint
