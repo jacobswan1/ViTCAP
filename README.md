@@ -42,8 +42,7 @@
  
  <em> Note: there seems to have an error when I try to initialize the PyTorch DDP mode in my local machine. As I previously conduct the whole experiments on Azure, which were bug-free, I'm not sure what leads to the DDP mode error in my local machine at this time but probably they should be good in your machine. Due to my limit time, I'll try fix this bug in future. But regularly, to start the DDP job, set the MASTER_ADDR, WORLD_SIZE parameters in ubuntu enrivon. The trainer should be able to auto start the DDP training. </em>
 
- 
- <br> 
+
  To conduct evaluation, modify the `type` in the YAML file to `pipeline_eval_multi`, and run:
  
  ```
@@ -55,6 +54,11 @@
     ./checkpoint/Logit_Vilt_captioning_testing_batch-size_512_encoder_vit_base_patch16_384_lr_1e-4_iter_60_vitbfocal20_bert_tokenizer_tags_ENC-DEC_multiplier_0.1_expand_tag-classifier_emb.pt
  ```
  to `./output/XXX/snapshot/model_iter_XXX.pt`. XXX depends on the batch size, and you will get a prompt <em>no model_iter_XXX.pt checkpoint found</em> if not correct, and just rename it would be fine accordingly.
+ If everything is correct, this should give your the results of ViTCAP:
+ 
+BLEU-4 | CIDEr  | METEOR | ROUGE | SPICE |
+---------|---------|---------|---------|---------|
+35.7  |   121.8 | 28.8 | 57.6 | 22.1
 
  To conduct the CIDEr optimization, modify `scst` to True and tune `scst_num_return` if GPU memory is not sufficient. Note that CIDEr optimization consumes very large memories and I just randomly sample just 70% tokens and reduce batch size and `scst_num_return` to 2 for training on my V100 devices. This probably indicates that better CIDEr score is very likely to be reached if using a larger memory device (say, A100) or better sampling method or larger scst_num_return number.
  
