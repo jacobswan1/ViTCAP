@@ -86,7 +86,7 @@ BLEU-4 | CIDEr  | METEOR | ROUGE | SPICE |
 - [x] COCO training TSV file.
 - [x] COCO pre-trained checkpoint.
 - [ ] Visualization codes for predicted semantic concepts and grounded visual concepts.
-- [ ] Implementation on no-caps and Google-CC and pre-training. No plan at this time. 
+- [ ] <s>Implementation on no-caps and Google-CC and pre-training.</s> No plan at this time. 
  
  
  ## Citation
