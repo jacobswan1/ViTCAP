@@ -39,7 +39,7 @@
  
  Run:
   ```
-    python run.py -c ./yaml/ViTCAP_Captioning_batch-size_512_encoder_vit_base_patch16_384_lr_1e-4_iter_60_vitbfocal20_bert_tokenizer_tags_ENC-DEC_multiplier_0.1.yaml.yaml
+    python run.py -c ./yaml/ViTCAP_Captioning_batch-size_512_encoder_vit_base_patch16_384_lr_1e-4_iter_60_vitbfocal20_bert_tokenizer_tags_ENC-DEC_multiplier_0.1.yaml
  ```
  
  <em> Note: there seems to have an error when I try to initialize the PyTorch DDP mode in my local machine. I'm not sure what leads to the DDP mode error in my local at this time but probably they are good in your machine. Due to my limit time, I'll try fix this bug in future. </em>
@@ -48,7 +48,7 @@
  To conduct evaluation, modify the `type` in the YAML file to `pipeline_eval_multi` and run:
  
  ```
-    python run.py -c ./yaml/ViTCAP_Captioning_batch-size_512_encoder_vit_base_patch16_384_lr_1e-4_iter_60_vitbfocal20_bert_tokenizer_tags_ENC-DEC_multiplier_0.1.yaml.yaml
+    python run.py -c ./yaml/ViTCAP_Captioning_batch-size_512_encoder_vit_base_patch16_384_lr_1e-4_iter_60_vitbfocal20_bert_tokenizer_tags_ENC-DEC_multiplier_0.1.yaml
  ```
  
  For example, to use the pre-trained checkpoint for evaluation, copy
